@@ -1,0 +1,32 @@
+{
+  "name": "SPI-teensy",
+  "keywords": "SPI, FreeRTOS, Teensy",
+  "description": "FreeRTOS port for SPI library for Teensy 4.0, 4.1",
+  "license": "G(L)PL",
+  "homepage": "http://www.arduino.cc/en/Reference/SPI",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tsandmann/SPI-teensy"
+  },
+  "version": "1.0-1",
+  "authors": [
+    {
+      "name": "Cristian Maglie",
+      "email": "c.maglie@bug.st"
+    },
+    {
+      "name": "Paul Stoffregen",
+      "email": "paul@pjrc.com"
+    },
+    {
+      "name": "Matthijs Kooijman",
+      "email": "matthijs@stdin.nl"
+    },
+    {
+      "name": "Timo Sandmann",
+      "maintainer": true
+    }
+  ],
+  "frameworks": "arduino",
+  "platforms": "teensy"
+}
