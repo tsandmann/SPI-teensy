@@ -922,7 +922,7 @@ private:
 };
 
 class SPIClass { // Teensy 4
-    static constexpr bool _DEBUG { true };
+    static constexpr bool _DEBUG { false };
 
 public:
 #if defined(ARDUINO_TEENSY41)
@@ -1126,15 +1126,15 @@ public:
         return static_cast<T>(port().RDR);
     }
 
-    uint8_t transfer(int data) {
+    uint8_t transfer(const int data) {
         return transfer(static_cast<uint8_t>(data));
     }
 
-    uint16_t transfer16(uint16_t data) {
+    uint16_t transfer16(const uint16_t data) {
         return transfer(data);
     }
 
-    uint32_t transfer32(uint32_t data) {
+    uint32_t transfer32(const uint32_t data) {
         return transfer(data);
     }
 

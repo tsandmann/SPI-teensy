@@ -218,7 +218,7 @@ void SPIClass::setBitOrder(uint8_t bitOrder) {
     updateCTAR(ctar);
 }
 
-void SPIClass::setDataMode(uint8_t dataMode) {
+void SPIClass::setDataMode(uint8_t /*dataMode*/) {
     hardware().clock_gate_register |= hardware().clock_gate_mask;
     // uint32_t ctar = port().CTAR0;
 
@@ -1453,9 +1453,9 @@ void SPIClass::transfer(const T* buf, T* retbuf, size_t count) {
     }
 }
 
-template void SPIClass::transfer<uint8_t>(const uint8_t* buf, uint8_t* retbuf, size_t count);
-template void SPIClass::transfer<uint16_t>(const uint16_t* buf, uint16_t* retbuf, size_t count);
-template void SPIClass::transfer<uint32_t>(const uint32_t* buf, uint32_t* retbuf, size_t count);
+template void SPIClass::transfer<uint8_t>(const uint8_t*, uint8_t*, size_t);
+template void SPIClass::transfer<uint16_t>(const uint16_t*, uint16_t*, size_t);
+template void SPIClass::transfer<uint32_t>(const uint32_t*, uint32_t*, size_t);
 
 void SPIClass::end() {
     // only do something if we have begun
