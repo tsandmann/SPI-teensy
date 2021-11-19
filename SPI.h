@@ -78,6 +78,10 @@
 #define SPI_HAS_NOTUSINGINTERRUPT 1
 #define SPI_ATOMIC_VERSION 1
 
+template <typename T>
+concept SPITransferType = std::same_as<uint8_t, T> || std::same_as<uint16_t, T>;
+
+
 class SPISettings {
 public:
     SPISettings(uint32_t clock, uint8_t bitOrder, uint8_t dataMode) {
@@ -279,45 +283,68 @@ public:
         }
     }
 
-    // Write to the SPI bus (MOSI pin) and also receive (MISO pin)
-    uint8_t transfer(uint8_t data) {
+    template <SPITransferType T>
+    T transfer(const T data) {
         port().SR = SPI_SR_TCF;
-        port().PUSHR = data;
-        while (!(port().SR & SPI_SR_TCF))
-            ; // wait
-        return port().POPR;
+        port().PUSHR = data | SPI_PUSHR_CTAS(sizeof(T) - 1);
+        while (!(port().SR & SPI_SR_TCF)) { // wait
+        }
+        return static_cast<T>(port().POPR);
     }
-    uint16_t transfer16(uint16_t data) {
-        port().SR = SPI_SR_TCF;
-        port().PUSHR = data | SPI_PUSHR_CTAS(1);
-        while (!(port().SR & SPI_SR_TCF))
-            ; // wait
-        return port().POPR;
+
+    uint32_t transfer(const uint32_t data) {
+        uint32_t ret { static_cast<uint32_t>(transfer<uint16_t>(data << 16U) << 16U) };
+        ret |= transfer<uint16_t>(static_cast<uint16_t>(data));
+        return ret;
+    }
+
+    uint8_t transfer(const int data) {
+        return transfer(static_cast<uint8_t>(data));
+    }
+
+    uint16_t transfer16(const uint16_t data) {
+        return transfer(data);
+    }
+
+    uint32_t transfer32(const uint32_t data) {
+        return transfer(data);
     }
 
     void inline transfer(void* buf, size_t count) {
+        transfer(reinterpret_cast<uint8_t*>(buf), count);
+    }
+
+    template <SPITransferType T>
+    void transfer(T* buf, size_t count) {
         transfer(buf, buf, count);
     }
-    void setTransferWriteFill(uint8_t ch) {
+
+    void setTransferWriteFill(uint16_t ch) {
         _transferWriteFill = ch;
     }
-    void transfer(const void* buf, void* retbuf, size_t count);
+
+    template <SPITransferType T>
+    void transfer(const T* buf, T* retbuf, size_t count);
 
     // Asynch support (DMA )
 #ifdef SPI_HAS_TRANSFER_ASYNC
-    bool transfer(const void* txBuffer, void* rxBuffer, size_t count, EventResponderRef event_responder);
+    template <SPITransferType T>
+    bool transfer(const T* txBuffer, T* rxBuffer, size_t count, EventResponderRef event_responder);
 
-    friend void _spi_dma_rxISR0(void);
-    friend void _spi_dma_rxISR1(void);
-    friend void _spi_dma_rxISR2(void);
+    template <SPITransferType T>
+    bool transfer_os(const T* txBuffer, T* rxBuffer, size_t count);
 
-    inline void dma_rxisr(void);
+    friend void _spi_dma_rxISR0();
+    friend void _spi_dma_rxISR1();
+    friend void _spi_dma_rxISR2();
+
+    inline void dma_rxisr();
 #endif
 
 
     // After performing a group of transfers and releasing the chip select
     // signal, this function allows others to access the SPI bus
-    void endTransaction(void) {
+    void endTransaction() {
 #ifdef SPI_TRANSACTION_MISMATCH_LED
         if (!inTransactionFlag) {
             pinMode(SPI_TRANSACTION_MISMATCH_LED, OUTPUT);
@@ -422,7 +449,7 @@ private:
     uint8_t inTransactionFlag = 0;
 #endif
 
-    uint8_t _transferWriteFill = 0;
+    alignas(4) uint16_t _transferWriteFill = 0;
 
     // DMA Support
 #ifdef SPI_HAS_TRANSFER_ASYNC

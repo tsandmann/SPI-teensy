@@ -210,7 +210,7 @@ void SPIClass::updateCTAR(uint32_t ctar) {
 void SPIClass::setBitOrder(uint8_t bitOrder) {
     hardware().clock_gate_register |= hardware().clock_gate_mask;
     uint32_t ctar = port().CTAR0;
-    if (bitOrder == LSBFIRST) {
+    if (bitOrder == arduino::LSBFIRST) {
         ctar |= SPI_CTAR_LSBFE;
     } else {
         ctar &= ~SPI_CTAR_LSBFE;
@@ -356,171 +356,142 @@ void SPIClass::setSCK(uint8_t pin) {
     }
 }
 
-void SPIClass::transfer(const void* buf, void* retbuf, size_t count) {
-    if (count == 0)
+#if 1
+template <SPITransferType T>
+void SPIClass::transfer(const T* buf, T* retbuf, size_t count) {
+    if (count == 0) {
         return;
-    if (!(port().CTAR0 & SPI_CTAR_LSBFE)) {
-        // We are doing the standard MSB order
-        const uint8_t* p_write = (const uint8_t*) buf;
-        uint8_t* p_read = (uint8_t*) retbuf;
-        size_t count_read = count;
+    }
 
-        // Lets clear the reader queue
-        port().MCR = SPI_MCR_MSTR | SPI_MCR_CLR_RXF | SPI_MCR_PCSIS(0x1F);
+    const T* p_write { buf };
+    T* p_read { retbuf };
+    size_t count_read { count };
 
-        uint32_t sr;
+    const bool msb_order { !(port().CTAR0 & SPI_CTAR_LSBFE) }; // standard MSB order?
 
-        // Now lets loop while we still have data to output
-        if (count & 1) {
-            if (p_write) {
-                if (count > 1)
-                    port().PUSHR = *p_write++ | SPI_PUSHR_CONT | SPI_PUSHR_CTAS(0);
-                else
-                    port().PUSHR = *p_write++ | SPI_PUSHR_CTAS(0);
+    port().MCR = SPI_MCR_MSTR | SPI_MCR_CLR_RXF | SPI_MCR_PCSIS(0x1f); // clear the reader queue
+
+    // loop while we still have data to output
+    uint32_t sr;
+    if (count & 1) {
+        if (p_write) {
+            if (count > 1) {
+                port().PUSHR = *p_write++ | SPI_PUSHR_CONT | SPI_PUSHR_CTAS(sizeof(T) - 1U);
             } else {
-                if (count > 1)
-                    port().PUSHR = _transferWriteFill | SPI_PUSHR_CONT | SPI_PUSHR_CTAS(0);
-                else
-                    port().PUSHR = _transferWriteFill | SPI_PUSHR_CTAS(0);
+                port().PUSHR = *p_write++ | SPI_PUSHR_CTAS(sizeof(T) - 1U);
             }
-            count--;
-        }
-
-        uint16_t w = (uint16_t) (_transferWriteFill << 8) | _transferWriteFill;
-
-        while (count > 0) {
-            // Push out the next byte;
-            if (p_write) {
-                w = (*p_write++) << 8;
-                w |= *p_write++;
+        } else {
+            if (count > 1) {
+                port().PUSHR = static_cast<T>(_transferWriteFill) | SPI_PUSHR_CONT | SPI_PUSHR_CTAS(sizeof(T) - 1U);
+            } else {
+                port().PUSHR = static_cast<T>(_transferWriteFill) | SPI_PUSHR_CTAS(sizeof(T) - 1U);
             }
-            uint16_t queue_full_status_mask = (hardware().queue_size - 1) << 12;
-            if (count == 2)
-                port().PUSHR = w | SPI_PUSHR_CTAS(1);
-            else
-                port().PUSHR = w | SPI_PUSHR_CONT | SPI_PUSHR_CTAS(1);
-            count -= 2; // how many bytes to output.
-            // Make sure queue is not full before pushing next byte out
-            do {
-                sr = port().SR;
-                if (sr & 0xF0) {
-                    uint16_t w = port().POPR; // Read any pending RX bytes in
-                    if (count_read & 1) {
-                        if (p_read) {
-                            *p_read++ = w; // Read any pending RX bytes in
-                        }
-                        count_read--;
-                    } else {
-                        if (p_read) {
-                            *p_read++ = w >> 8;
-                            *p_read++ = (w & 0xff);
-                        }
-                        count_read -= 2;
-                    }
-                }
-            } while ((sr & (15 << 12)) > queue_full_status_mask);
         }
+        count--;
+    }
 
-        // now lets wait for all of the read bytes to be returned...
-        while (count_read) {
-            sr = port().SR;
-            if (sr & 0xF0) {
-                uint16_t w = port().POPR; // Read any pending RX bytes in
-                if (count_read & 1) {
-                    if (p_read)
-                        *p_read++ = w; // Read any pending RX bytes in
-                    count_read--;
+    uint16_t w { sizeof(T) > 1 ? _transferWriteFill : static_cast<uint16_t>((_transferWriteFill << 8U) | _transferWriteFill) };
+
+    while (count > 0) {
+        // Push out the next byte;
+        if (p_write) {
+            if (sizeof(T) == 1) {
+                if (msb_order) {
+                    w = (*p_write++) << 8U;
+                    w |= *p_write++;
                 } else {
-                    if (p_read) {
-                        *p_read++ = w >> 8;
-                        *p_read++ = (w & 0xff);
-                    }
-                    count_read -= 2;
+                    w = *p_write++;
+                    w |= (*p_write++) << 8U;
                 }
-            }
-        }
-    } else {
-        // We are doing the less ofen LSB mode
-        const uint8_t* p_write = (const uint8_t*) buf;
-        uint8_t* p_read = (uint8_t*) retbuf;
-        size_t count_read = count;
-
-        // Lets clear the reader queue
-        port().MCR = SPI_MCR_MSTR | SPI_MCR_CLR_RXF | SPI_MCR_PCSIS(0x1F);
-
-        uint32_t sr;
-
-        // Now lets loop while we still have data to output
-        if (count & 1) {
-            if (p_write) {
-                if (count > 1)
-                    port().PUSHR = *p_write++ | SPI_PUSHR_CONT | SPI_PUSHR_CTAS(0);
-                else
-                    port().PUSHR = *p_write++ | SPI_PUSHR_CTAS(0);
             } else {
-                if (count > 1)
-                    port().PUSHR = _transferWriteFill | SPI_PUSHR_CONT | SPI_PUSHR_CTAS(0);
-                else
-                    port().PUSHR = _transferWriteFill | SPI_PUSHR_CTAS(0);
-            }
-            count--;
-        }
-
-        uint16_t w = _transferWriteFill;
-
-        while (count > 0) {
-            // Push out the next byte;
-            if (p_write) {
                 w = *p_write++;
-                w |= ((*p_write++) << 8);
             }
-            uint16_t queue_full_status_mask = (hardware().queue_size - 1) << 12;
-            if (count == 2)
-                port().PUSHR = w | SPI_PUSHR_CTAS(1);
-            else
-                port().PUSHR = w | SPI_PUSHR_CONT | SPI_PUSHR_CTAS(1);
-            count -= 2; // how many bytes to output.
-            // Make sure queue is not full before pushing next byte out
-            do {
-                sr = port().SR;
-                if (sr & 0xF0) {
-                    uint16_t w = port().POPR; // Read any pending RX bytes in
-                    if (count_read & 1) {
-                        if (p_read) {
-                            *p_read++ = w; // Read any pending RX bytes in
-                        }
-                        count_read--;
-                    } else {
-                        if (p_read) {
-                            *p_read++ = (w & 0xff);
-                            *p_read++ = w >> 8;
-                        }
-                        count_read -= 2;
-                    }
-                }
-            } while ((sr & (15 << 12)) > queue_full_status_mask);
+        } //
+        const uint16_t queue_full_status_mask { static_cast<uint16_t>((hardware().queue_size - 1U) << 12U) };
+        if (count == 3 - sizeof(T)) {
+            port().PUSHR = w | SPI_PUSHR_CTAS(1);
+        } else {
+            port().PUSHR = w | SPI_PUSHR_CONT | SPI_PUSHR_CTAS(1);
         }
-
-        // now lets wait for all of the read bytes to be returned...
-        while (count_read) {
+        count -= 3 - sizeof(T);
+        // Make sure queue is not full before pushing next byte out
+        do {
             sr = port().SR;
             if (sr & 0xF0) {
-                uint16_t w = port().POPR; // Read any pending RX bytes in
+                const uint16_t w { static_cast<uint16_t>(port().POPR) }; // Read any pending RX bytes in
                 if (count_read & 1) {
-                    if (p_read)
-                        *p_read++ = w; // Read any pending RX bytes in
+                    if (p_read) {
+                        *p_read++ = static_cast<T>(w); // Read any pending RX bytes in
+                    }
                     count_read--;
                 } else {
                     if (p_read) {
-                        *p_read++ = (w & 0xff);
-                        *p_read++ = w >> 8;
+                        if (sizeof(T) == 1) {
+                            if (msb_order) {
+                                *p_read++ = w >> 8U;
+                                *p_read++ = w & 0xff;
+                            } else {
+                                *p_read++ = w & 0xff;
+                                *p_read++ = w >> 8U;
+                            }
+                        } else {
+                            *p_read++ = w;
+                        }
                     }
-                    count_read -= 2;
+                    count_read -= 3 - sizeof(T);
                 }
+            }
+        } while ((sr & (15 << 12)) > queue_full_status_mask);
+    }
+
+    // now lets wait for all of the read bytes to be returned...
+    while (count_read) {
+        sr = port().SR;
+        if (sr & 0xF0) {
+            uint16_t w = port().POPR; // Read any pending RX bytes in
+            if (count_read & 1) {
+                if (p_read) {
+                    *p_read++ = w; // Read any pending RX bytes in
+                }
+                count_read--;
+            } else {
+                if (p_read) {
+                    if (sizeof(T) == 1) {
+                        if (msb_order) {
+                            *p_read++ = w >> 8U;
+                            *p_read++ = w & 0xff;
+                        } else {
+                            *p_read++ = w & 0xff;
+                            *p_read++ = w >> 8U;
+                        }
+                    } else {
+                        *p_read++ = w;
+                    }
+                }
+                count_read -= 3 - sizeof(T);
             }
         }
     }
 }
+#else
+template <SPITransferType T>
+void SPIClass::transfer(const T* buf, T* retbuf, size_t count) {
+    auto p_write { buf };
+    auto p_read { retbuf };
+    if (p_read) {
+        for (size_t i {}; i < count; ++i) {
+            *p_read++ = transfer(p_write ? *p_write++ : static_cast<T>(_transferWriteFill));
+        }
+    } else {
+        for (size_t i {}; i < count; ++i) {
+            transfer(p_write ? *p_write++ : static_cast<T>(_transferWriteFill));
+        }
+    }
+}
+#endif
+template void SPIClass::transfer<uint8_t>(const uint8_t*, uint8_t*, size_t);
+template void SPIClass::transfer<uint16_t>(const uint16_t*, uint16_t*, size_t);
+
 //=============================================================================
 // ASYNCH Support
 //=============================================================================
@@ -528,7 +499,6 @@ void SPIClass::transfer(const void* buf, void* retbuf, size_t count) {
 // Try Transfer using DMA.
 //=========================================================================
 #ifdef SPI_HAS_TRANSFER_ASYNC
-static uint8_t bit_bucket;
 #define dontInterruptAtCompletion(dmac) (dmac)->TCD->CSR &= ~DMA_TCD_CSR_INTMAJOR
 
 //=========================================================================
@@ -579,15 +549,19 @@ bool SPIClass::initDMAChannels() {
 // Main Async Transfer function
 //=========================================================================
 
-bool SPIClass::transfer(const void* buf, void* retbuf, size_t count, EventResponderRef event_responder) {
-    uint8_t dma_first_byte;
+template <SPITransferType T>
+bool SPIClass::transfer(const T* buf, T* retbuf, size_t count, EventResponderRef event_responder) {
+    DMAMEM static T bit_bucket __attribute__((aligned(4)));
+
     if (_dma_state == DMAState::notAllocated) {
-        if (!initDMAChannels())
+        if (!initDMAChannels()) {
             return false;
+        }
     }
 
-    if (_dma_state == DMAState::active)
+    if (_dma_state == DMAState::active) {
         return false; // already active
+    }
 
     event_responder.clearEvent(); // Make sure it is not set yet
     if (count < 2) {
@@ -606,26 +580,27 @@ bool SPIClass::transfer(const void* buf, void* retbuf, size_t count, EventRespon
     }
 
     // Now See if caller passed in a source buffer.
-    _dmaTX->TCD->ATTR_DST = 0; // Make sure set for 8 bit mode
-    uint8_t* write_data = (uint8_t*) buf;
+    T dma_first_byte;
+    _dmaTX->TCD->ATTR_DST = sizeof(T) - 1; // N bit mode
+    T* write_data = const_cast<T*>(buf);
     if (buf) {
         dma_first_byte = *write_data;
-        _dmaTX->sourceBuffer((uint8_t*) write_data + 1, count - 1);
+        _dmaTX->sourceBuffer(write_data + 1, (count - 1) * sizeof(T));
         _dmaTX->TCD->SLAST = 0; // Finish with it pointing to next location
     } else {
-        dma_first_byte = _transferWriteFill;
-        _dmaTX->source((uint8_t&) _transferWriteFill); // maybe have setable value
+        dma_first_byte = static_cast<T>(_transferWriteFill);
+        T* ptr { reinterpret_cast<T*>(&_transferWriteFill) };
+        _dmaTX->source(*ptr);
         DMAChanneltransferCount(_dmaTX, count - 1);
     }
+    _dmaRX->TCD->ATTR_SRC = sizeof(T) - 1; // N bit mode
     if (retbuf) {
         // On T3.5 must handle SPI1/2 differently as only one DMA channel
-        _dmaRX->TCD->ATTR_SRC = 0; // Make sure set for 8 bit mode...
-        _dmaRX->destinationBuffer((uint8_t*) retbuf, count);
+        _dmaRX->destinationBuffer(retbuf, count * sizeof(T));
         _dmaRX->TCD->DLASTSGA = 0; // At end point after our bufffer
     } else {
         // Write  only mode
-        _dmaRX->TCD->ATTR_SRC = 0; // Make sure set for 8 bit mode...
-        _dmaRX->destination((uint8_t&) bit_bucket);
+        _dmaRX->destination(bit_bucket);
         DMAChanneltransferCount(_dmaRX, count);
     }
 
@@ -637,7 +612,10 @@ bool SPIClass::transfer(const void* buf, void* retbuf, size_t count, EventRespon
 
     port().SR = 0xFF0F0000;
 
-    // Lets try to output the first byte to make sure that we are in 8 bit mode...
+    // Lets try to output the first byte
+    if (sizeof(T) > 1) {
+        port().CTAR0 |= SPI_CTAR_FMSZ(8); // dma uses ctar0
+    }
     port().PUSHR = dma_first_byte | SPI_PUSHR_CTAS(0) | SPI_PUSHR_CONT;
 
     if (hardware().tx_dma_channel) {
@@ -657,11 +635,30 @@ bool SPIClass::transfer(const void* buf, void* retbuf, size_t count, EventRespon
     return true;
 }
 
+template bool SPIClass::transfer<uint8_t>(const uint8_t*, uint8_t*, size_t, EventResponderRef);
+template bool SPIClass::transfer<uint16_t>(const uint16_t*, uint16_t*, size_t, EventResponderRef);
+
+template <SPITransferType T>
+bool SPIClass::transfer_os(const T* txBuffer, T* rxBuffer, size_t count) {
+    EventResponder er;
+    er.setContext(::xTaskGetCurrentTaskHandle());
+    er.attachImmediate([](EventResponderRef event) {
+        BaseType_t higher_woken { pdFALSE };
+        ::vTaskNotifyGiveFromISR(reinterpret_cast<TaskHandle_t>(event.getContext()), &higher_woken);
+        portYIELD_FROM_ISR(higher_woken);
+    });
+    const auto res { transfer(txBuffer, rxBuffer, count, er) };
+    ::ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    return res;
+}
+
+template bool SPIClass::transfer_os<uint8_t>(const uint8_t*, uint8_t*, size_t);
+template bool SPIClass::transfer_os<uint16_t>(const uint16_t*, uint16_t*, size_t);
 
 //-------------------------------------------------------------------------
 // DMA RX ISR
 //-------------------------------------------------------------------------
-void SPIClass::dma_rxisr(void) {
+void SPIClass::dma_rxisr() {
     _dmaRX->clearInterrupt();
     _dmaTX->clearComplete();
     _dmaRX->clearComplete();
@@ -685,7 +682,7 @@ void SPIClass::dma_rxisr(void) {
             if (port().CTAR0 & SPI_CTAR_FMSZ(8)) {
                 port().PUSHR = (_transferWriteFill | SPI_PUSHR_CTAS(0) | SPI_PUSHR_CONT);
             } else {
-                port().PUSHR = (_transferWriteFill | SPI_PUSHR_CTAS(0) | SPI_PUSHR_CONT);
+                port().PUSHR = (static_cast<uint8_t>(_transferWriteFill) | SPI_PUSHR_CTAS(0) | SPI_PUSHR_CONT);
             }
         } else {
             if (port().CTAR0 & SPI_CTAR_FMSZ(8)) {
@@ -706,7 +703,7 @@ void SPIClass::dma_rxisr(void) {
         port().RSER = 0;
         // port().MCR = SPI_MCR_MSTR | SPI_MCR_CLR_RXF | SPI_MCR_PCSIS(0x1F);  // clear out the queue
         port().SR = 0xFF0F0000;
-        port().CTAR0 &= ~(SPI_CTAR_FMSZ(8)); // Hack restore back to 8 bits
+        port().CTAR0 &= ~(SPI_CTAR_FMSZ(8)); // restore back to 8 bits
 
         _dma_state = DMAState::completed; // set back to 1 in case our call wants to start up dma again
         _dma_event_responder->triggerEvent();
@@ -718,7 +715,7 @@ void SPIClass::dma_rxisr(void) {
 /**********************************************************/
 /*     32 bit Teensy-LC                                   */
 /**********************************************************/
-#warning "Teensy-LC version incomplete"
+#error "Teensy-LC version not implemented"
 
 #ifdef SPI_HAS_TRANSFER_ASYNC
 void _spi_dma_rxISR0(void) {
