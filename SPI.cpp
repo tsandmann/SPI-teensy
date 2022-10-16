@@ -1570,10 +1570,12 @@ bool SPIClass::transfer(const T* buf, T* retbuf, size_t count, EventResponderRef
     }
     // lets clear cache before we update sizes...
     T* write_data = const_cast<T*>(buf);
-    if (reinterpret_cast<uintptr_t>(write_data) >= 0x20200000u) {
+    const auto tx_addr { reinterpret_cast<uintptr_t>(write_data) };
+    if (tx_addr >= 0x20'200'000UL && tx_addr < 0x20'280'000UL) {
         arm_dcache_flush(write_data, count * sizeof(T));
     }
-    if (reinterpret_cast<uintptr_t>(retbuf) >= 0x20200000u) {
+    const auto rx_addr { reinterpret_cast<uintptr_t>(retbuf) };
+    if (rx_addr >= 0x20'200'000UL && rx_addr < 0x20'280'000UL) {
         arm_dcache_delete(retbuf, count * sizeof(T));
     }
 
@@ -1608,7 +1610,7 @@ bool SPIClass::transfer(const T* buf, T* retbuf, size_t count, EventResponderRef
     _dma_event_responder = &event_responder;
     // Now try to start it?
     // Setup DMA main object
-    yield();
+    // yield();
 
 #ifdef DEBUG_DMA_TRANSFERS
     // Lets dump TX, RX
@@ -1642,9 +1644,14 @@ bool SPIClass::transfer_os(const T* txBuffer, T* rxBuffer, size_t count) {
     EventResponder er;
     er.setContext(::xTaskGetCurrentTaskHandle());
     er.attachImmediate([](EventResponderRef event) {
-        BaseType_t higher_woken { pdFALSE };
-        ::vTaskNotifyGiveFromISR(reinterpret_cast<TaskHandle_t>(event.getContext()), &higher_woken);
-        portYIELD_FROM_ISR(higher_woken);
+        if (xPortIsInsideInterrupt() == pdTRUE) {
+            BaseType_t higher_woken { pdFALSE };
+            vTaskNotifyGiveFromISR(reinterpret_cast<TaskHandle_t>(event.getContext()), &higher_woken);
+            portYIELD_FROM_ISR(higher_woken);
+            portDATA_SYNC_BARRIER(); // mitigate arm errata #838869
+        } else {
+            xTaskNotifyGive(reinterpret_cast<TaskHandle_t>(event.getContext()));
+        }
     });
     const auto res { transfer(txBuffer, rxBuffer, count, er) };
     ::ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
