@@ -292,6 +292,11 @@ public:
         return static_cast<T>(port().POPR);
     }
 
+    template <typename T>
+    std::enable_if<std::is_same<T, uint32_t>::value, uint32_t>::type transfer(const T data) {
+        return transfer32(data);
+    }
+
     uint32_t transfer(const uint32_t data) {
         uint32_t ret { static_cast<uint32_t>(transfer<uint16_t>(data << 16U) << 16U) };
         ret |= transfer<uint16_t>(static_cast<uint16_t>(data));
